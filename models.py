@@ -43,15 +43,21 @@ class BeatTracker(object):
 
 class ODFBeatTracker():
 
-	def __init__(self):
+	def __init__(self, odf_idx):
 
-		self.odf = config.ODF_ALGOS[config.odf_idx] # "wpd"
+		self.odf_idx = odf_idx # "wpd"
 
 		return 
 
 	def get_onsets(self, audio_path):
-		onsets, odfNum = onsetDetection(audio_path)
-		onsets = onsets[odfNum == config.odf_idx]
+		onsets, odfNum, peakIndex, odf, t = onsetDetection(audio_path)
+		self.t = t
+		self.peakTimes = onsets
+		self.odfNum = odfNum
+		self.peakIndex = peakIndex
+		self.odf = odf
+		onsets = onsets[odfNum == self.odf_idx]
+		# hook()
 		return onsets
 
 	def get_tempo(self, onsets):
@@ -97,88 +103,76 @@ class ODFBeatTracker():
 		return clusters
 
 
-	def get_beats(self, audio_path):
-		"""
-		
-		"""
+	def get_beats(self, audio_path, plot=True):
 		onsets = self.get_onsets(audio_path)
 
-		# onsets = np.array([1.860,
-		# 		2.627,
-		# 		3.333,
-		# 		4.053,
-		# 		4.753,
-		# 		5.480,
-		# 		6.203,
-		# 		6.910,
-		# 		7.630,
-		# 		8.340,
-		# 		9.070,
-		# 		9.793,
-		# 		10.517,
-		# 		11.230,
-		# 		11.943,
-		# 		12.663,
-		# 		13.383,
-		# 		14.110,
-		# 		14.833,
-		# 		15.550,
-		# 		16.267,
-		# 		16.980,
-		# 		17.697,
-		# 		18.403,
-		# 		19.117,
-		# 		19.837,
-		# 		20.557,
-		# 		21.270,
-		# 		21.987,
-		# 		22.710,
-		# 		23.437,
-		# 		24.153,
-		# 		24.867,
-		# 		25.590,
-		# 		26.340,
-		# 		27.060,
-		# 		27.763,
-		# 		28.447,
-		# 		29.157,
-		# 		29.870])
-
 		tempo_clusters = self.get_tempo(onsets)
-
-		tempo_clusters = tempo_clusters[:5] # take 5 highest-rank tempi
 
 		"""initialize agents"""
 		agents = []
 		for cluster in tempo_clusters:
 			for onset in onsets[onsets < config.STARTUP_PERIOD]:
-				agents.append(Agent(cluster.interval, onset))
+				if cluster.interval != 0:
+					agents.append(Agent(cluster.interval, onset, cluster.score))
 
-		for onset in (onsets):
-			new_agents = []
+
+		pop_agent = Agent(0, 0, 0)
+		for idx, onset in enumerate(onsets):
+			print(f"num of agents: {len(agents)}")
 			for agent in agents:
-				if onset - agent.history[-1] > config.TIMEOUT or agent.num_missed >= config.MISSING_THR:
+				if (abs(onset - agent.history[-1]) > config.TIMEOUT 
+					or (agent.beat_interval <= 0.1)):
+					pop_agent = agent
 					agents.remove(agent)
+					continue
 				else:
-					while agent.prediction + config.TOL_POST * agent.beat_interval < onset:
+					while (agent.prediction + config.TOL_OUTER) < onset:
 						agent.prediction += agent.beat_interval
-					if agent.prediction + config.TOL_PRE * agent.beat_interval <= onset and agent.prediction + config.TOL_POST * agent.beat_interval:
-						if abs(agent.prediction - onset) > config.TOL_INNER:
-							new_agents.append(copy.deepcopy(agent))
-						diff = onset - agent.prediction
-						agent.beat_interval += diff / config.CORRECTION_FACTOR 
-						agent.predction = onset + agent.beat_interval
-						agent.history.append(onset)
-						agent.score += (1 - diff/2)
+
+					error = agent.prediction - onset
+					"""if the error is within the inner tolerance threshold"""
+					if (abs(error) < config.TOL_INNER):
+						agent.forward(onset, error)
+
+						"""if within the outter tolerance threshold"""
+					elif (abs(error) < config.TOL_OUTER):
+						# new_agents.append(copy.deepcopy(agent))
+						agent.forward(onset, error)
+						
 					else:
-						agent.num_missed += 1
+						agent.missed_forward()
 			
-			agents.extend(new_agents)
+
 
 		agents.sort(key=lambda x: x.score)
 		if len(agents) == 0:
-			return np.array([])
-		best_beats = np.array(agents[-1].history)
+			best_beats = np.sort(np.array(pop_agent.history))
+		else:
+			best_beats = np.sort(np.array(agents[-1].history))
+
+		if plot:
+
+			plot_idx = self.odf_idx
+
+			plt.figure(figsize=(20, 8))
+			from cycler import cycler
+			c = 'bgrcmyk'
+			# plt.rcParams['axes.prop_cycle'] = cycler(color=c)
+			plt.plot(self.t, self.odf[:, plot_idx], color='b')
+			legend = ['rms', 'hfc', 'sf ', 'cd ', 'rcd', 'pd ', 'wpd']
+			for i in range(len(self.peakIndex)):
+				if self.odfNum[i] == plot_idx:
+					plt.plot(self.peakTimes[i], self.odf[self.peakIndex[i], plot_idx],
+				 	'og', label=legend[self.odfNum[i]])
+			
+			for beat in best_beats:
+				plt.stem(beat, 6, 'dr')
+
+			plt.title(f'Onsets and beats found for file: {audio_path}')
+			plt.xlabel('Time')
+			plt.ylabel('ODF: Rectified Complex Domain')
+			plt.show()
+			hook()
 
 		return best_beats
 

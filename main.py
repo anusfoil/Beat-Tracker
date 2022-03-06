@@ -12,7 +12,7 @@ import config
 import hook
 
 
-def evaluate(processor):
+def evaluate(processor="BeatTrackingProcessor", idx=5):
 	"""
 	evaluate across the entire set
 
@@ -26,7 +26,7 @@ def evaluate(processor):
 
 	brd = BallroomDataset()
 	# bt = BeatTracker(processor)
-	bt = ODFBeatTracker()
+	bt = ODFBeatTracker(idx)
 
 	eval_results = pd.DataFrame()
 
@@ -52,19 +52,23 @@ def evaluate(processor):
 	cols = eval_results.columns.tolist()
 	cols = cols[-2:] + cols[:-2]
 	eval_results = eval_results[cols]
-	eval_results.to_csv(f"results/beatroot.csv", index=False)
+	eval_results.to_csv(f"results/beatroot_{config.ODF_ALGOS[idx]}.csv", index=False)
 
 	return eval_results
 
 
 def run_experiments():
-	for processor in config.PROCESSORS:
-		evaluate(processor)
+	# for processor in config.PROCESSORS:
+	# 	evaluate(processor=processor)
+
+	for idx, odf in enumerate(config.ODF_ALGOS):
+		evaluate(idx=4)
 
 	pass
 
 		
 if __name__ == '__main__':
-	run_experiments()
+	# run_experiments()
+	plot_results_by_styles()
 
 	pass

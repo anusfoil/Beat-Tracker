@@ -6,6 +6,7 @@ import mir_eval
 import numpy as np
 import pandas as pd
 import librosa
+import matplotlib.pyplot as plt
 from tqdm import tqdm
 import config as config
 
@@ -98,16 +99,37 @@ def scoring_func(n):
 
 class Agent(object):
 	"""docstring for Agent"""
-	def __init__(self, beat_interval, event):
+	def __init__(self, beat_interval, event, cluster_score):
 		"""
 		event: an onset timestamp in seconds
 		"""
-		self.beat_interval = beat_interval 
+		self.beat_interval = round(beat_interval, 2) 
 		self.prediction = event + beat_interval
 		self.history = [event]
-		self.score = 1
+		self.score = cluster_score
 		self.num_missed = 0
+
+	def duplicate_with(self, agent_2):
+		"""if tempo and phase agreed, consider being the same agent"""
+		if (self.beat_interval == agent_2.beat_interval
+			and self.prediction == agent_2.prediction):
+			return True
+		return False
 				
+	def forward(self, onset, error):
+		"""when agent hits an onset, update beat_interval, history, score"""
+		self.beat_interval += error * config.CORRECTION_FACTOR 
+		self.history.append(round(onset, 2))
+		self.score += 1
+
+		self.prediction = onset + self.beat_interval
+		pass
+
+	def missed_forward(self):
+		self.num_missed += 1
+		self.history.append(self.prediction)
+		self.prediction += self.beat_interval
+		pass
 
 
 """ODF helper functions, adapted from lab 3"""
@@ -190,20 +212,39 @@ def onsetDetection(audioFile, wlen=0.040, hop=0.010, wd=9, thr=1.25, show=0):
 	odfNum = peaks[1]
 	peakTimes=t[peakIndex]
 	if show:
-		plt.figure(figsize=(10, 2))
+		# plt.figure(figsize=(10, 2))
+		# from cycler import cycler
+		# c = 'bgrcmyk'
+		# plt.rcParams['axes.prop_cycle'] = cycler(color=c)
+		# plt.plot(t, odf)
+		# legend = ['rms', 'hfc', 'sf ', 'cd ', 'rcd', 'pd ', 'wpd']
+		# for i in range(len(peaks)):
+		# 	plt.plot(peakTimes[i], odf[peakIndex[i], odfNum[i]], 
+		# 		'o' + c[odfNum[i]], label=legend[odfNum[i]])
+		# plt.title('Onsets found for file: ' + audioFile)
+		# plt.xlabel('Time')
+		# plt.ylabel('ODFs')
+		# plt.show()
+		# hook()
+  #   if plot:
+		plot_idx = 0
+
+		plt.figure(figsize=(20, 10))
 		from cycler import cycler
 		c = 'bgrcmyk'
 		plt.rcParams['axes.prop_cycle'] = cycler(color=c)
-		plt.plot(t, odf)
+		plt.plot(t, odf[:, plot_idx])
 		legend = ['rms', 'hfc', 'sf ', 'cd ', 'rcd', 'pd ', 'wpd']
-		for i in range(len(peaks)):
-			plt.plot(peakTimes[i], odf[peaks[0,i], odfNum[i]], 
-				'o' + c[odfNum[i]], label=legend[odfNum[i]])
-		plt.title('Onsets found for file: ' + audioFile)
+		for i in range(len(peaks[0])):
+			if odfNum[i] == plot_idx:
+				plt.plot(peakTimes[i], odf[peaks[0][i], odfNum[i]],
+			 	'o' + c[odfNum[i]], label=legend[odfNum[i]])
+		plt.title('Onsets found for file: ')
 		plt.xlabel('Time')
-		plt.ylabel('ODFs')
-		# plt.show()
-	return [peakTimes, odfNum]
+		plt.ylabel('ODF')
+		plt.show()
+		hook()
+	return peakTimes, odfNum, peakIndex, odf, t
 
 
 
@@ -230,6 +271,84 @@ def medfilt(x, k):
 		y[:-j,-(i+1)] = x[j:]
 		y[-j:,-(i+1)] = x[-1]
 	return np.median(y, axis=1)
+
+
+
+def plot_results():
+	rnn_results = pd.read_csv("results/BeatTrackingProcessor.csv")
+	dbn_results = pd.read_csv("results/DBNBeatTrackingProcessor.csv")
+
+	rms_result = pd.read_csv("results/beatroot_rms.csv")
+	# hfc_result = pd.read_csv("results/beatroot_hfc.csv")
+	sf_result = pd.read_csv("results/beatroot_sf.csv")
+	cd_result = pd.read_csv("results/beatroot_cd.csv")
+	rcd_result = pd.read_csv("results/beatroot_rcd.csv")
+	pd_result = pd.read_csv("results/beatroot_pd.csv")
+	
+	results = [
+		# rnn_results, dbn_results,
+				rms_result,
+				# hfc_result,
+				sf_result,
+				cd_result,
+				rcd_result,
+				pd_result]
+
+	fig, ax = plt.subplots()
+	w = 0.05
+
+	metrics = ['F-measure', 'P-score', 'Information gain']
+	algos = [
+		# 'rnn', 'dbn', 
+		'rms', 'sf', 'cd', 'rcd', 'pd']
+	for i, result in enumerate(results):
+		label = algos[i]
+		plt.boxplot(result[metrics].values.T.tolist(), positions=np.array(range(len(metrics)))+w*i,
+			sym='', widths=w, boxprops=dict(facecolor=f"C{i}"), 
+			patch_artist=True)
+
+		ticks = metrics
+		plt.plot([], color=f"C{i}", label=label)
+
+	plt.legend()
+	plt.xticks(range(len(ticks)), ticks, rotation=20)
+
+	plt.grid()
+	plt.title('results of of beatroot by different ODF')
+	plt.ylabel('score')
+	plt.show()
+	pass
+
+def plot_results_by_styles():
+	sf_result = pd.read_csv("results/beatroot_sf.csv")
+
+	fig, ax = plt.subplots()
+	w = 0.05
+
+	metrics = ['F-measure', 'P-score', 'Information gain']
+	styles = sf_result['style'].unique()
+
+	for i, style in enumerate(styles):
+		result = sf_result[sf_result['style'] == style]
+		label = style
+
+		plt.boxplot(result[metrics].values.T.tolist(), positions=np.array(range(len(metrics)))+w*i,
+			sym='', widths=w, boxprops=dict(facecolor=f"C{i}"), 
+			patch_artist=True)
+
+		ticks = metrics
+		plt.plot([], color=f"C{i}", label=label)
+
+	plt.legend()
+	plt.xticks(range(len(ticks)), ticks, rotation=20)
+
+	plt.grid()
+
+	plt.title('results of Beatroot(SF) by genre')
+	plt.ylabel('score')
+	plt.show()
+	pass
+
 
 if __name__ == '__main__':
 
